@@ -3,15 +3,25 @@
 DOCUMENTATION = '''
 ---
 module: eh_restartSystem
-version_added:
+version_added: 6.2.6 (also validated on 7.3.3)
 short_description: restarts the system by screenscraping
 idempotent:  Yes.  Can be ran multiple times and only executes if needed.
 description:
+    - Restarts the extrahop system remotely by grabbing the csrftoken cookie from the login session, and posting restart command
 options:
-
+    eda:
+        descripton: the hostname of the EDA targetted
+        required: True
+    username:
+        description:
+            - User to create the API Key for.  Must be an existing admin user
+        required: True
+    passwd:
+        description:
+            - Password for defined user.
+        required: True
 '''
 
-#from Extrahop import Extrahop
 import re
 import requests
 import time
@@ -44,7 +54,6 @@ def main():
     requests.packages.urllib3.disable_warnings(SNIMissingWarning)
     requests.packages.urllib3.disable_warnings(InsecurePlatformWarning)
     s = requests.Session()
-    eda = Extrahop()
 
     # Start the restart update process
     s = requests.Session()
@@ -54,7 +63,12 @@ def main():
 
     # Login to admin page
     rsp = s.get(LOGIN_PATH, verify=False)
-    token = rsp.cookies['csrftoken']
+
+    try:
+        token = rsp.cookies['csrftoken']
+    except KeyError:
+        token = rsp.cookies['extrahop_csrftoken']
+
     login_params = {'csrfmiddlewaretoken': token,
                     'next': '/admin/',
                     'username': username,
@@ -64,8 +78,6 @@ def main():
     loginrsp = s.post(LOGIN_PATH,
                              data=login_params,
                              verify=False)
-
-    token = loginrsp.cookies['csrftoken'] or rsp.cookies['extrahop_csrftoken']
 
     p = re.compile('(<h1>Administration<\/h1>|<title>ExtraHop Administration</title>)',re.IGNORECASE)
     # Check if we loaded the admin page
@@ -77,54 +89,19 @@ def main():
 
     # Loaded the Admin Page.  Let's go to restart
     rsp = s.get(RESTART_PATH)
-    token = rsp.cookies['csrftoken'] or rsp.cookies['extrahop_csrftoken']
-
+    try:
+        token = rsp.cookies['csrftoken']
+    except KeyError:
+        token = rsp.cookies['extrahop_csrftoken']
     # Loaded the restart Page.  Let's send the data!
     s.headers.update({'Referer':RESTART_PATH})
     restart_params = {'csrfmiddlewaretoken': token}
     restart_rsp = s.post(RESTART_PATH,data=restart_params, verify=False)
 
-    module.fail_json(msg=str(restart_rsp))
+    if restart_rsp.status_code != 200:
+            module.fail_json(msg=str(restart_rsp))
 
-class Extrahop(object):
-    '''
-    Utility and generic superclass for Extrahop platforms and operations.
-    '''
-    def __init__(self):
-        '''
-        Constructor
-        '''
-        pass
+    module.exit_json(changed=True)
 
-    def check_for_response(self,eda):
-        '''
-        Check for timeouts and service startup.  This function should be used in a polling cycle to continuously check every X amount of time
-        returns:
-            True if system is responding
-            False if system is not responding or still starting up
-        '''
-        # Attempt HTTP connection to main page.
-        try:
-            rsp = requests.get('https://' + eda + '/extrahop/ping/', verify=False)
-        except requests.exceptions.ConnectionError:
-            # Timeout.  System is not responding
-            return False
-        if rsp.status_code != 200:
-            # Server error.  Usually due to service startup or shutdown.
-            return False
-        else:
-            return True
-
-
-    def web_logon(self,httpsession,user,passwd):
-        '''
-        Logon to HTTP Web using requests.Session() object.
-        returns:
-          dict("session": requests.Session()
-               "statusCode": int
-               "msg": str
-               }
-        '''
-        pass
 from ansible.module_utils.basic import *
 main()
